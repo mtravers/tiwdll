@@ -10,7 +10,8 @@
                             :speed 15
                             :ctx nil
                             :cell-size 8
-                            :max-sugar 10}))
+                            :max-sugar 10
+                            :interval-id nil}))
 
 (defn sugar-growth
   "Grow sugar back in cells over time"
@@ -79,16 +80,35 @@
       ;; Update statistics
       (canvas/update-stats final-world))))
 
+(defn start-simulation-loop []
+  "Start the simulation interval loop"
+  (when (:running @simulation-state)
+    (let [speed (:speed @simulation-state)
+          interval (max 10 (- 510 (* speed 25))) ; 10ms to 485ms
+          interval-id (js/setInterval simulation-step interval)]
+      (swap! simulation-state assoc :interval-id interval-id))))
+
+(defn stop-simulation-loop []
+  "Stop the simulation interval loop"
+  (when-let [interval-id (:interval-id @simulation-state)]
+    (js/clearInterval interval-id)
+    (swap! simulation-state assoc :interval-id nil)))
+
 (defn start-simulation []
   "Start the simulation loop"
   (swap! simulation-state assoc :running true)
-  (let [speed (:speed @simulation-state)
-        interval (max 10 (- 510 (* speed 25)))] ; 10ms to 485ms
-    (js/setInterval simulation-step interval)))
+  (start-simulation-loop))
 
 (defn stop-simulation []
   "Stop the simulation"
+  (stop-simulation-loop)
   (swap! simulation-state assoc :running false))
+
+(defn restart-simulation-loop []
+  "Restart the simulation loop with new speed"
+  (when (:running @simulation-state)
+    (stop-simulation-loop)
+    (start-simulation-loop)))
 
 (defn reset-simulation []
   "Reset the simulation to initial state"
@@ -131,7 +151,9 @@
   (.addEventListener (js/document.getElementById "stop-btn") "click" stop-simulation)
   (.addEventListener (js/document.getElementById "reset-btn") "click" reset-simulation)
   (.addEventListener (js/document.getElementById "speed-slider") "input"
-                     (fn [e] (swap! simulation-state assoc :speed (js/parseInt (.-value (.-target e)))))))
+                     (fn [e]
+                       (swap! simulation-state assoc :speed (js/parseInt (.-value (.-target e))))
+                       (restart-simulation-loop))))
 
 (defn init-sugarscape! []
   "Initialize the Sugarscape simulation"

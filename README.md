@@ -25,6 +25,25 @@ src/
 
 ## Quick Start
 
+### Browser Version (ClojureScript)
+
+1. **Start the development server:**
+   ```bash
+   npx shadow-cljs watch app
+   ```
+
+2. **Open your browser to:**
+   ```
+   http://localhost:8081
+   ```
+
+3. **Use the controls:**
+   - Click "Start" to begin the simulation
+   - Adjust speed with the slider
+   - Change agent count and click "Reset" to restart with new settings
+
+### Command Line Version (Clojure)
+
 1. **Run the Sugarscape demo:**
    ```bash
    lein repl
