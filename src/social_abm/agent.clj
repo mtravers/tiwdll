@@ -7,7 +7,9 @@
   Agent
   (step [agent world]
     (let [neighbors (.get-neighbors world x y vision)
-          best-cell (apply max-key :value (filter :value neighbors))
+          value-cells (filter :value neighbors)
+          best-cell (when (seq value-cells)
+                     (apply max-key :value value-cells))
           new-pos (if best-cell
                    [(:x best-cell) (:y best-cell)]
                    [x y])
@@ -31,32 +33,32 @@
 (defn random-walk
   "Move agent randomly to an adjacent cell"
   [agent world]
-  (let [[x y] (get-position agent)
+  (let [[x y] (.get-position agent)
         directions [[-1 -1] [-1 0] [-1 1] [0 -1] [0 1] [1 -1] [1 0] [1 1]]
         [dx dy] (rand-nth directions)
         new-x (+ x dx)
         new-y (+ y dy)]
     (if (and (>= new-x 0) (< new-x (:width world))
              (>= new-y 0) (< new-y (:height world)))
-      (set-position agent [new-x new-y])
+      (.set-position agent [new-x new-y])
       agent)))
 
 (defn move-towards
   "Move agent towards a target position"
   [agent target-x target-y]
-  (let [[x y] (get-position agent)
+  (let [[x y] (.get-position agent)
         dx (cond (< x target-x) 1
                  (> x target-x) -1
                  :else 0)
         dy (cond (< y target-y) 1
                  (> y target-y) -1
                  :else 0)]
-    (set-position agent [(+ x dx) (+ y dy)])))
+    (.set-position agent [(+ x dx) (+ y dy)])))
 
 (defn find-resource
   "Find the nearest resource within vision range"
   [agent world resource-predicate]
-  (let [[x y] (get-position agent)
+  (let [[x y] (.get-position agent)
         vision (:vision agent)
         neighbors (.get-neighbors world x y vision)
         resources (filter resource-predicate neighbors)]
@@ -66,7 +68,7 @@
 (defn consume-resource
   "Consume a resource at the agent's current position"
   [agent world resource-amount]
-  (let [[x y] (get-position agent)]
+  (let [[x y] (.get-position agent)]
     (-> world
         (.set-cell x y nil)
         (as-> w (assoc agent :energy (+ (:energy agent) resource-amount))))))
@@ -74,7 +76,7 @@
 (defrecord SocialAgent [id x y energy vision metabolism friends enemies reputation]
   Agent
   (step [agent world]
-    (let [nearby-agents (filter #(let [[ax ay] (get-position %)]
+    (let [nearby-agents (filter #(let [[ax ay] (.get-position %)]
                                   (< (w/manhattan-distance x y ax ay) vision))
                                 (remove #{agent} (.get-agents world)))
           social-influence (reduce + (map #(if (contains? friends (:id %)) 1 -1) nearby-agents))
