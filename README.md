@@ -1,3 +1,11 @@
+# Disclaimer
+
+This is pure vibecoding, I just wanted to see if this would worl. Haven't done any interesting modeling with it yet! In particular it lacks a real language for specifying behavior, it's just [Clojure code](https://github.com/mtravers/tiwdll/blob/main/src/social_abm/browser/sugarscape.cljs#L49). If you wan to do this kind of modeling, you are better off with [NetLogo](https://ccl.northwestern.edu/netlogo/index.shtml)
+
+# Screenshot
+
+![](media/README-1.png)
+
 # Social ABM - Agent-Based Modeling Framework
 
 A Clojure framework for agent-based modeling of social systems, inspired by Sugarscape and NetLogo.
