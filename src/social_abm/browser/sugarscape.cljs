@@ -11,7 +11,8 @@
                             :ctx nil
                             :cell-size 8
                             :max-sugar 10
-                            :interval-id nil}))
+                            :interval-id nil
+                            :history []}))
 
 (defn sugar-growth
   "Grow sugar back in cells over time"
@@ -65,20 +66,27 @@
 (defn simulation-step []
   "Execute one simulation step"
   (when (:running @simulation-state)
-    (let [world (:world @simulation-state)
+    (let [world        (:world @simulation-state)
           stepped-world (p/step-world world)
-          final-world (sugarscape-step stepped-world)]
+          final-world  (sugarscape-step stepped-world)
+          agents       (filter some? (p/get-agents final-world))
+          n            (count agents)
+          avg          (fn [f] (if (pos? n) (/ (reduce + (map f agents)) n) 0))
+          entry        {:tick         (:tick final-world)
+                        :count        n
+                        :avg-energy   (avg :energy)
+                        :avg-metabolism (avg :metabolism)}
+          history      (let [h (conj (:history @simulation-state) entry)]
+                         (if (> (count h) 200) (subvec h (- (count h) 200)) h))]
 
-      (swap! simulation-state assoc :world final-world)
+      (swap! simulation-state assoc :world final-world :history history)
 
-      ;; Render the world
       (canvas/draw-world (:ctx @simulation-state)
-                        final-world
-                        (:cell-size @simulation-state)
-                        (:max-sugar @simulation-state))
-
-      ;; Update statistics
-      (canvas/update-stats final-world))))
+                         final-world
+                         (:cell-size @simulation-state)
+                         (:max-sugar @simulation-state))
+      (canvas/update-stats final-world)
+      (canvas/draw-charts history agents))))
 
 (defn start-simulation-loop []
   "Start the simulation interval loop"
@@ -144,7 +152,39 @@
                       initial-world
                       (:cell-size @simulation-state)
                       (:max-sugar @simulation-state))
-    (canvas/update-stats initial-world)))
+    (canvas/update-stats initial-world)
+    (swap! simulation-state assoc :history [])
+    (canvas/draw-charts [] [])))
+
+(defn setup-canvas-events []
+  "Set up mousemove / mouseleave on the canvas for agent tooltips"
+  (let [canvas  (js/document.getElementById "simulation-canvas")
+        tooltip (js/document.getElementById "agent-tooltip")]
+    (.addEventListener canvas "mousemove"
+      (fn [e]
+        (let [rect      (.getBoundingClientRect canvas)
+              cx        (- (.-clientX e) (.-left rect))
+              cy        (- (.-clientY e) (.-top rect))
+              state     @simulation-state
+              world     (:world state)
+              cell-size (:cell-size state)
+              agent     (when world
+                          (canvas/find-agent-at-pos world cx cy cell-size))]
+          (if agent
+            (do
+              (set! (.-innerHTML tooltip)
+                    (str "<b>" (str (:id agent)) "</b><br>"
+                         "Pos: (" (:x agent) ", " (:y agent) ")<br>"
+                         "Energy: " (:energy agent) "<br>"
+                         "Metabolism: " (:metabolism agent) "<br>"
+                         "Vision: " (:vision agent) "<br>"
+                         "Age: " (:age agent) " / " (:max-age agent)))
+              (set! (.. tooltip -style -display) "block")
+              (set! (.. tooltip -style -left) (str (+ (.-clientX e) 14) "px"))
+              (set! (.. tooltip -style -top)  (str (+ (.-clientY e) 14) "px")))
+            (set! (.. tooltip -style -display) "none")))))
+    (.addEventListener canvas "mouseleave"
+      (fn [_] (set! (.. tooltip -style -display) "none")))))
 
 (defn setup-controls []
   "Set up event listeners for control buttons"
@@ -170,6 +210,7 @@
                 (println "Canvas context obtained")
                 (swap! simulation-state assoc :ctx ctx)
                 (setup-controls)
+                (setup-canvas-events)
                 (reset-simulation)
                 (println "Sugarscape initialized successfully!"))
               (println "ERROR: Could not get canvas context"))))

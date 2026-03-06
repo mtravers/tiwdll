@@ -66,6 +66,45 @@
             color: #666;
             line-height: 1.6;
         }
+        .stats {
+            flex-wrap: wrap;
+        }
+        .charts {
+            display: flex;
+            gap: 12px;
+            margin-top: 16px;
+            flex-wrap: wrap;
+        }
+        .chart-container {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .chart-label {
+            font-size: 11px;
+            color: #666;
+            text-align: center;
+            font-family: monospace;
+        }
+        canvas.chart {
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            display: block;
+        }
+        #agent-tooltip {
+            display: none;
+            position: fixed;
+            background: rgba(20, 20, 30, 0.92);
+            color: #eee;
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 1000;
+            border: 1px solid #555;
+            line-height: 1.7;
+        }
     </style>
 </head>
 <body>
@@ -84,9 +123,31 @@
             <div class="stat-item">Tick: <span id="tick">0</span></div>
             <div class="stat-item">Agents: <span id="agent-count-display">0</span></div>
             <div class="stat-item">Avg Energy: <span id="avg-energy">0</span></div>
+            <div class="stat-item">Avg Metabolism: <span id="avg-metabolism">0</span></div>
+            <div class="stat-item">Avg Vision: <span id="avg-vision">0</span></div>
+            <div class="stat-item">Avg Age: <span id="avg-age">0</span></div>
         </div>
 
         <canvas id="simulation-canvas" width="800" height="600"></canvas>
+
+        <div class="charts">
+            <div class="chart-container">
+                <div class="chart-label">Population</div>
+                <canvas id="chart-population" class="chart" width="220" height="130"></canvas>
+            </div>
+            <div class="chart-container">
+                <div class="chart-label">Avg Energy</div>
+                <canvas id="chart-energy" class="chart" width="220" height="130"></canvas>
+            </div>
+            <div class="chart-container">
+                <div class="chart-label">Metabolism Distribution</div>
+                <canvas id="chart-metabolism" class="chart" width="220" height="130"></canvas>
+            </div>
+            <div class="chart-container">
+                <div class="chart-label">Vision Distribution</div>
+                <canvas id="chart-vision" class="chart" width="220" height="130"></canvas>
+            </div>
+        </div>
 
         <div class="description">
             <p><strong>Sugarscape Simulation:</strong> Watch agents move around the landscape consuming sugar resources.
@@ -96,6 +157,7 @@
         </div>
     </div>
 
+    <div id="agent-tooltip"></div>
     <div id="app"></div>
     <script src="js/main.js"></script>
     <script>
