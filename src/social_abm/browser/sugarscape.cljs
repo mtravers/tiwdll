@@ -96,6 +96,7 @@
 
 (defn start-simulation []
   "Start the simulation loop"
+  (prn (dissoc @simulation-state :world :ctx))
   (swap! simulation-state assoc :running true)
   (start-simulation-loop))
 
