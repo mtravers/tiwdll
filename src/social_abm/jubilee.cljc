@@ -1,0 +1,264 @@
+(ns social-abm.jubilee
+  "Pure, non-spatial debt-jubilee model: wealth dynamics, bilateral loans,
+   arrears, and a king who can cancel debt. No DOM/rendering here.")
+
+(def default-params
+  {:population 150
+   :init-wealth 3.0
+   :return-mean 0.02            ; mean return on wealth per tick
+   :return-vol 0.05              ; +/- uniform noise on return
+   :base-income 0.9              ; flat income per tick; kept below subsistence-cost
+   :consumption-vol 0.3          ; +/- uniform noise on cost-of-living bill
+   :subsistence-cost 1.0         ; mean cost-of-living bill per tick
+   :interest-rate 0.02           ; per-tick interest on outstanding loans
+   :lend-reserve-multiple 2      ; lenders keep this many x subsistence-cost in reserve
+   :repay-reserve-multiple 2     ; agents repay once wealth exceeds this x subsistence-cost
+   :repayment-rate 0.2           ; fraction of surplus above reserve paid toward debt each tick
+   :arrears-fraction 0.3         ; share of any shortfall that becomes arrears (no lender) vs a loan
+   :jubilee-mode :periodic       ; :periodic :stochastic :threshold :manual
+   :jubilee-period 50
+   :jubilee-hazard 0.02
+   :gini-threshold 0.6
+   :jubilee-cooldown 20
+   :haircut 1.0})                ; fraction of debt/arrears forgiven when jubilee fires
+
+;; ---------------------------------------------------------------------------
+;; Agents & state
+
+(defn make-agent [id wealth]
+  {:id id :wealth wealth :arrears 0.0})
+
+(defn init-state [params]
+  (let [n (:population params)]
+    {:agents (mapv #(make-agent % (:init-wealth params)) (range n))
+     :loans []
+     :tick 0
+     :next-loan-id 0
+     :king-treasury 0.0
+     :jubilee-ticks []
+     :history []
+     :net-worths []
+     :params params}))
+
+;; ---------------------------------------------------------------------------
+;; Step A/B: returns on wealth, income, cost-of-living (capped at available cash)
+
+(defn apply-returns-income-consumption
+  "Returns [agent' unpaid-bill] for one agent's per-tick cash flow."
+  [agent params]
+  (let [{:keys [return-mean return-vol base-income consumption-vol subsistence-cost]} params
+        shock (* return-vol (dec (* 2 (rand))))
+        w1 (max 0 (* (:wealth agent) (+ 1 return-mean shock)))
+        w2 (+ w1 base-income)
+        bill-noise (* consumption-vol (dec (* 2 (rand))))
+        bill (max 0 (* subsistence-cost (+ 1 bill-noise)))
+        payable (min w2 bill)
+        unpaid (- bill payable)]
+    [(assoc agent :wealth (- w2 payable)) unpaid]))
+
+;; ---------------------------------------------------------------------------
+;; Step C: interest accrual on outstanding loans
+
+(defn accrue-interest [loans]
+  (mapv (fn [loan] (update loan :balance * (+ 1 (:rate loan)))) loans))
+
+;; ---------------------------------------------------------------------------
+;; Step D/E: cover shortfalls via arrears (no cash, a claim on the king) or a
+;; bilateral loan from a lender with surplus above their reserve.
+
+(defn resolve-borrowing
+  [agents unpaid params next-loan-id]
+  (let [{:keys [arrears-fraction lend-reserve-multiple subsistence-cost interest-rate]} params
+        reserve (* subsistence-cost lend-reserve-multiple)
+        borrower-ids (shuffle (filter #(pos? (nth unpaid %)) (range (count agents))))]
+    (loop [agents agents
+           bids borrower-ids
+           loans []
+           next-id next-loan-id]
+      (if (empty? bids)
+        {:agents agents :loans loans :next-loan-id next-id}
+        (let [bid (first bids)
+              amt (nth unpaid bid)
+              arrears-amt (* amt arrears-fraction)
+              loan-need (- amt arrears-amt)
+              agents (update agents bid update :arrears + arrears-amt)
+              lender-idx (->> (range (count agents))
+                               (remove #(= % bid))
+                               (filter #(> (- (:wealth (nth agents %)) reserve) 0))
+                               shuffle
+                               first)]
+          (if (and lender-idx (pos? loan-need))
+            (let [surplus (- (:wealth (nth agents lender-idx)) reserve)
+                  transfer (min loan-need surplus)
+                  remainder (- loan-need transfer)
+                  agents (-> agents
+                             (update lender-idx update :wealth - transfer)
+                             (update bid update :wealth + transfer))
+                  agents (if (pos? remainder)
+                           (update agents bid update :arrears + remainder)
+                           agents)
+                  loan {:id next-id :lender lender-idx :borrower bid
+                        :balance transfer :rate interest-rate}]
+              (recur agents (rest bids) (conj loans loan) (inc next-id)))
+            (recur (if (pos? loan-need)
+                     (update agents bid update :arrears + loan-need)
+                     agents)
+                   (rest bids) loans next-id)))))))
+
+;; ---------------------------------------------------------------------------
+;; Step F: repayment. Agents with wealth above their reserve pay down loans
+;; first (to their actual lenders), then arrears (to the king; that cash
+;; leaves the modeled economy).
+
+(defn resolve-repayment [agents loans params]
+  (let [{:keys [subsistence-cost repay-reserve-multiple repayment-rate]} params
+        reserve (* subsistence-cost repay-reserve-multiple)]
+    (reduce
+     (fn [{:keys [agents loans treasury]} bid]
+       (let [agent (nth agents bid)
+             surplus (max 0 (- (:wealth agent) reserve))
+             budget (* surplus repayment-rate)]
+         (if (<= budget 0)
+           {:agents agents :loans loans :treasury treasury}
+           (let [[loans' agents' budget']
+                 (reduce (fn [[ls ag bud] loan]
+                           (if (and (= (:borrower loan) bid) (pos? bud) (pos? (:balance loan)))
+                             (let [pay (min bud (:balance loan))]
+                               [(conj ls (update loan :balance - pay))
+                                (-> ag
+                                    (update bid update :wealth - pay)
+                                    (update (:lender loan) update :wealth + pay))
+                                (- bud pay)])
+                             [(conj ls loan) ag bud]))
+                         [[] agents budget]
+                         loans)
+                 arrears-amt (:arrears (nth agents' bid))
+                 arrears-pay (min budget' arrears-amt)
+                 agents'' (if (pos? arrears-pay)
+                            (-> agents'
+                                (update bid update :arrears - arrears-pay)
+                                (update bid update :wealth - arrears-pay))
+                            agents')]
+             {:agents agents'' :loans loans' :treasury (+ treasury arrears-pay)}))))
+     {:agents agents :loans loans :treasury 0.0}
+     (range (count agents)))))
+
+(defn drop-dead-loans [loans]
+  (filterv #(> (:balance %) 1e-6) loans))
+
+;; ---------------------------------------------------------------------------
+;; Jubilee
+
+(defn apply-jubilee
+  "Forgive `haircut` fraction of every loan balance and every agent's arrears."
+  [state]
+  (let [haircut (get-in state [:params :haircut])
+        loans' (->> (:loans state)
+                    (mapv #(update % :balance * (- 1 haircut)))
+                    (filterv #(> (:balance %) 1e-6)))
+        agents' (mapv #(update % :arrears * (- 1 haircut)) (:agents state))]
+    (-> state
+        (assoc :loans loans' :agents agents')
+        (update :jubilee-ticks conj (:tick state)))))
+
+(defn should-jubilee? [state gini-now]
+  (let [{:keys [jubilee-mode jubilee-period jubilee-hazard gini-threshold jubilee-cooldown]} (:params state)
+        tick (:tick state)
+        last-tick (or (last (:jubilee-ticks state)) (- jubilee-cooldown))]
+    (case jubilee-mode
+      :periodic (and (pos? tick) (zero? (mod tick jubilee-period)))
+      :stochastic (< (rand) jubilee-hazard)
+      :threshold (and (> gini-now gini-threshold) (>= (- tick last-tick) jubilee-cooldown))
+      false)))
+
+;; ---------------------------------------------------------------------------
+;; Metrics
+
+(defn net-worths
+  "Vector of net worth (cash + claims held - debt owed - arrears owed), indexed like agents."
+  [agents loans]
+  (let [claims (reduce (fn [m loan] (update m (:lender loan) (fnil + 0) (:balance loan))) {} loans)
+        debts (reduce (fn [m loan] (update m (:borrower loan) (fnil + 0) (:balance loan))) {} loans)]
+    (mapv (fn [a] (- (+ (:wealth a) (get claims (:id a) 0))
+                      (get debts (:id a) 0)
+                      (:arrears a)))
+          agents)))
+
+(defn gini
+  "Gini coefficient via the relative mean absolute difference, normalized by mean |x|
+   rather than mean x. Plain mean-x blows up (wild swings, wrong sign) whenever the
+   population's net worth hovers near zero, which happens routinely in a stressed
+   economy; mean |x| stays well-behaved and bounded unless everyone is at exactly 0."
+  [xs]
+  (let [n (count xs)]
+    (if (< n 2)
+      0.0
+      (let [sorted (vec (sort xs))
+            mean-abs-x (/ (reduce + (map (fn [x] (if (neg? x) (- x) x)) sorted)) n)
+            numerator (reduce + (map-indexed (fn [idx x] (* x (- (* 2 (inc idx)) n 1))) sorted))]
+        (if (zero? mean-abs-x) 0.0 (/ numerator (* n n mean-abs-x)))))))
+
+(defn top-decile-share [xs]
+  (let [n (count xs)]
+    (if (zero? n)
+      0.0
+      (let [k (max 1 (quot n 10))
+            sorted-desc (vec (sort > xs))
+            top-sum (reduce + (take k sorted-desc))
+            total (reduce + xs)]
+        (if (zero? total) 0.0 (/ top-sum total))))))
+
+(defn frac-negative [xs]
+  (let [n (count xs)]
+    (if (zero? n) 0.0 (/ (count (filter neg? xs)) n))))
+
+(defn- metrics-entry [state nw jubilee?]
+  {:tick (:tick state)
+   :gini (gini nw)
+   :top-decile (top-decile-share nw)
+   :frac-negative (frac-negative nw)
+   :total-debt (reduce + 0.0 (map :balance (:loans state)))
+   :total-arrears (reduce + 0.0 (map :arrears (:agents state)))
+   :n-loans (count (:loans state))
+   :total-wealth (reduce + 0.0 (map :wealth (:agents state)))
+   :jubilee? jubilee?})
+
+(defn- push-history [state entry]
+  (let [h (conj (:history state) entry)]
+    (assoc state :history (if (> (count h) 200) (subvec h (- (count h) 200)) h))))
+
+;; ---------------------------------------------------------------------------
+;; Top-level step
+
+(defn step [state]
+  (let [params (:params state)
+        pairs (mapv #(apply-returns-income-consumption % params) (:agents state))
+        agents1 (mapv first pairs)
+        unpaid (mapv second pairs)
+        loans1 (accrue-interest (:loans state))
+        {agents2 :agents loans2 :loans next-id :next-loan-id}
+        (resolve-borrowing agents1 unpaid params (:next-loan-id state))
+        {agents3 :agents loans3 :loans treasury-delta :treasury}
+        (resolve-repayment agents2 loans2 params)
+        loans3 (drop-dead-loans loans3)
+        nw (net-worths agents3 loans3)
+        g (gini nw)
+        mid (assoc state
+                   :agents agents3 :loans loans3 :next-loan-id next-id
+                   :king-treasury (+ (:king-treasury state) treasury-delta)
+                   :tick (inc (:tick state)))
+        fire? (should-jubilee? mid g)
+        final (if fire? (apply-jubilee mid) mid)
+        nw-final (if fire? (net-worths (:agents final) (:loans final)) nw)]
+    (-> final
+        (assoc :net-worths nw-final)
+        (push-history (metrics-entry final nw-final fire?)))))
+
+(defn force-jubilee
+  "King's-discretion jubilee: apply immediately regardless of trigger mode."
+  [state]
+  (let [state' (apply-jubilee state)
+        nw (net-worths (:agents state') (:loans state'))]
+    (-> state'
+        (assoc :net-worths nw)
+        (push-history (metrics-entry state' nw true)))))

@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Jubilee - Debt Forgiveness Lab</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 { color: #333; text-align: center; margin-bottom: 4px; }
+        .nav { text-align: center; margin-bottom: 20px; font-size: 13px; }
+        .nav a { color: #555; }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .controls button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            color: white;
+        }
+        .controls button:hover { opacity: 0.8; }
+        .start-btn { background-color: #4CAF50; }
+        .stop-btn { background-color: #f44336; }
+        .reset-btn { background-color: #008CBA; }
+        .king-btn { background-color: #8e24aa; }
+        .stats {
+            display: flex;
+            gap: 14px;
+            margin-bottom: 16px;
+            font-family: monospace;
+            flex-wrap: wrap;
+        }
+        .stat-item {
+            background-color: #f9f9f9;
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+        fieldset {
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            padding: 10px 14px;
+        }
+        legend { font-weight: bold; color: #444; font-size: 13px; }
+        .params { display: flex; flex-wrap: wrap; gap: 10px 24px; }
+        .param {
+            display: flex;
+            flex-direction: column;
+            font-size: 12px;
+            color: #555;
+            min-width: 170px;
+        }
+        .param label { display: flex; justify-content: space-between; }
+        .param output, .param .val { font-family: monospace; color: #222; }
+        #jubilee-canvas {
+            border: 2px solid #333;
+            display: block;
+            margin: 0 auto;
+            background: #fafafa;
+        }
+        .charts {
+            display: flex;
+            gap: 12px;
+            margin-top: 16px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .chart-container { display: flex; flex-direction: column; gap: 4px; }
+        .chart-label { font-size: 11px; color: #666; text-align: center; font-family: monospace; }
+        canvas.chart { border: 1px solid #ddd; border-radius: 3px; display: block; }
+        #agent-tooltip {
+            display: none;
+            position: fixed;
+            background: rgba(20, 20, 30, 0.92);
+            color: #eee;
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 1000;
+            border: 1px solid #555;
+            line-height: 1.7;
+        }
+        .description { margin-top: 20px; color: #666; line-height: 1.6; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Jubilee: A Debt-Forgiveness Lab</h1>
+        <div class="nav"><a href="index.html">&larr; Sugarscape lab</a></div>
+
+        <div class="controls">
+            <button id="start-btn" class="start-btn">Start</button>
+            <button id="stop-btn" class="stop-btn">Stop</button>
+            <button id="reset-btn" class="reset-btn">Reset</button>
+            <button id="king-btn" class="king-btn">Declare Jubilee Now</button>
+            <label>Speed: <input type="range" id="speed-slider" min="1" max="20" value="15"></label>
+        </div>
+
+        <div class="stats">
+            <div class="stat-item">Tick: <span id="tick">0</span></div>
+            <div class="stat-item">Population: <span id="population">0</span></div>
+            <div class="stat-item">Active loans: <span id="n-loans">0</span></div>
+            <div class="stat-item">Inequality idx* (net worth): <span id="gini-val">0</span></div>
+            <div class="stat-item">Negative net worth: <span id="negshare-val">0%</span></div>
+            <div class="stat-item">Total debt: <span id="debt-val">0</span></div>
+            <div class="stat-item">Total arrears: <span id="arrears-val">0</span></div>
+            <div class="stat-item">King's treasury: <span id="treasury-val">0</span></div>
+            <div class="stat-item">Jubilees declared: <span id="jubilee-count">0</span></div>
+        </div>
+
+        <fieldset>
+            <legend>Population (requires Reset)</legend>
+            <div class="params">
+                <div class="param"><label>Agents<span>150</span></label>
+                    <input type="number" id="population-input" min="10" max="400" value="150"></div>
+                <div class="param"><label>Initial wealth<span>3</span></label>
+                    <input type="number" id="init-wealth" min="0" max="50" value="3"></div>
+            </div>
+        </fieldset>
+
+        <fieldset>
+            <legend>Wealth dynamics (live)</legend>
+            <div class="params">
+                <div class="param"><label>Return on wealth (mean) <span id="return-mean-val"></span></label>
+                    <input type="range" id="return-mean" min="-0.05" max="0.15" step="0.005" value="0.02"></div>
+                <div class="param"><label>Return volatility <span id="return-vol-val"></span></label>
+                    <input type="range" id="return-vol" min="0" max="0.3" step="0.01" value="0.05"></div>
+                <div class="param"><label>Base income <span id="base-income-val"></span></label>
+                    <input type="range" id="base-income" min="0" max="3" step="0.05" value="0.9"></div>
+                <div class="param"><label>Cost-of-living volatility <span id="consumption-vol-val"></span></label>
+                    <input type="range" id="consumption-vol" min="0" max="1" step="0.05" value="0.3"></div>
+                <div class="param"><label>Subsistence cost <span id="subsistence-cost-val"></span></label>
+                    <input type="range" id="subsistence-cost" min="0.1" max="3" step="0.05" value="1"></div>
+            </div>
+        </fieldset>
+
+        <fieldset>
+            <legend>Credit (live)</legend>
+            <div class="params">
+                <div class="param"><label>Interest rate <span id="interest-rate-val"></span></label>
+                    <input type="range" id="interest-rate" min="0" max="0.2" step="0.005" value="0.02"></div>
+                <div class="param"><label>Lender reserve (&times; subsistence) <span id="lend-reserve-multiple-val"></span></label>
+                    <input type="range" id="lend-reserve-multiple" min="1" max="10" step="0.5" value="2"></div>
+                <div class="param"><label>Repay reserve (&times; subsistence) <span id="repay-reserve-multiple-val"></span></label>
+                    <input type="range" id="repay-reserve-multiple" min="1" max="10" step="0.5" value="2"></div>
+                <div class="param"><label>Repayment rate <span id="repayment-rate-val"></span></label>
+                    <input type="range" id="repayment-rate" min="0" max="1" step="0.02" value="0.2"></div>
+                <div class="param"><label>Arrears fraction <span id="arrears-fraction-val"></span></label>
+                    <input type="range" id="arrears-fraction" min="0" max="1" step="0.02" value="0.3"></div>
+            </div>
+        </fieldset>
+
+        <fieldset>
+            <legend>Jubilee (live)</legend>
+            <div class="params">
+                <div class="param"><label>Trigger mode</label>
+                    <select id="jubilee-mode">
+                        <option value="periodic" selected>Periodic</option>
+                        <option value="stochastic">Stochastic (hazard)</option>
+                        <option value="threshold">Threshold (inequality idx)</option>
+                        <option value="manual">Manual only</option>
+                    </select></div>
+                <div class="param"><label>Period (ticks) <span id="jubilee-period-val"></span></label>
+                    <input type="range" id="jubilee-period" min="5" max="300" step="5" value="50"></div>
+                <div class="param"><label>Hazard rate/tick <span id="jubilee-hazard-val"></span></label>
+                    <input type="range" id="jubilee-hazard" min="0" max="0.2" step="0.005" value="0.02"></div>
+                <div class="param"><label>Inequality threshold <span id="gini-threshold-val"></span></label>
+                    <input type="range" id="gini-threshold" min="0.2" max="0.95" step="0.01" value="0.6"></div>
+                <div class="param"><label>Cooldown (ticks) <span id="jubilee-cooldown-val"></span></label>
+                    <input type="range" id="jubilee-cooldown" min="5" max="100" step="5" value="20"></div>
+                <div class="param"><label>Haircut &phi; <span id="haircut-val"></span></label>
+                    <input type="range" id="haircut" min="0" max="1" step="0.05" value="1"></div>
+            </div>
+        </fieldset>
+
+        <canvas id="jubilee-canvas" width="900" height="280"></canvas>
+        <div class="chart-label" style="text-align:center; margin-top:4px;">
+            Net worth by agent, poorest &rarr; richest (red = underwater). Pink lines = jubilee ticks.
+        </div>
+
+        <div class="charts">
+            <div class="chart-container">
+                <div class="chart-label">Inequality idx* (net worth)</div>
+                <canvas id="chart-gini" class="chart" width="220" height="130"></canvas>
+            </div>
+            <div class="chart-container">
+                <div class="chart-label">Top-decile share</div>
+                <canvas id="chart-topdecile" class="chart" width="220" height="130"></canvas>
+            </div>
+            <div class="chart-container">
+                <div class="chart-label">% agents underwater</div>
+                <canvas id="chart-negshare" class="chart" width="220" height="130"></canvas>
+            </div>
+            <div class="chart-container">
+                <div class="chart-label">Total outstanding debt</div>
+                <canvas id="chart-debt" class="chart" width="220" height="130"></canvas>
+            </div>
+            <div class="chart-container">
+                <div class="chart-label">Total arrears (owed to king)</div>
+                <canvas id="chart-arrears" class="chart" width="220" height="130"></canvas>
+            </div>
+        </div>
+
+        <div class="description">
+            <p><strong>Model:</strong> each tick, every agent's wealth earns a (noisy) return, receives income,
+            and pays a (noisy) cost-of-living bill. Agents who can't cover the bill either accrue <em>arrears</em>
+            (an unpaid claim held by the king, no cash changes hands) or take a <em>loan</em> from a wealthier
+            agent with spare reserve &mdash; a real cash transfer, and real risk for the lender. Debt accrues
+            interest; agents with surplus repay their loans, then their arrears. A king can declare Jubilee
+            &mdash; on a schedule, at random, when inequality crosses a threshold, or at will &mdash; forgiving
+            a &phi; fraction of every loan and arrears balance.</p>
+            <p>Hover the net-worth ladder to inspect an individual agent's cash, claims, debt and arrears.</p>
+            <p style="font-size:12px;">*The textbook Gini coefficient assumes nobody's wealth is negative and is
+            bounded to [0,1]. Once agents can carry debt, net worth goes negative and that assumption breaks
+            &mdash; dividing by the population's mean net worth blows up whenever total debt roughly offsets
+            total wealth. This index uses the same relative-mean-absolute-difference formula as Gini but
+            normalizes by mean |net worth| instead, which stays numerically stable but is no longer bounded
+            to [0,1] or directly comparable to a textbook Gini figure. Read it as directional (higher =
+            more concentrated, a sharp drop = a jubilee just fired), and use the top-decile share and
+            % underwater charts for a cleanly bounded reading of inequality.</p>
+        </div>
+    </div>
+
+    <div id="agent-tooltip"></div>
+    <script src="js/main.js"></script>
+</body>
+</html>

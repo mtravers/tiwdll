@@ -110,44 +110,101 @@
                        (and (= ax gx) (= ay gy))))
                    (filter some? (p/get-agents world))))))
 
-(defn draw-line-chart [canvas-id values color]
-  "Draw a time-series line chart onto canvas-id"
-  (when-let [canvas (js/document.getElementById canvas-id)]
-    (let [ctx (.getContext canvas "2d")
-          w   (.-width canvas)
-          h   (.-height canvas)
-          pl 6 pr 6 pt 6 pb 6
-          pw  (- w pl pr)
-          ph  (- h pt pb)
-          n   (count values)
-          mx  (reduce max 1 values)
-          mn  (reduce min 0 values)
-          rng (max 1 (- mx mn))]
-      (set! (.-fillStyle ctx) "#f8f9fa")
-      (.fillRect ctx 0 0 w h)
-      ;; mid grid line
-      (set! (.-strokeStyle ctx) "#e0e0e0")
-      (set! (.-lineWidth ctx) 0.5)
-      (.beginPath ctx)
-      (.moveTo ctx pl (+ pt (/ ph 2)))
-      (.lineTo ctx (+ pl pw) (+ pt (/ ph 2)))
-      (.stroke ctx)
-      ;; data line
-      (when (>= n 2)
-        (set! (.-strokeStyle ctx) color)
-        (set! (.-lineWidth ctx) 1.5)
-        (set! (.-lineJoin ctx) "round")
-        (.beginPath ctx)
-        (doseq [[i v] (map-indexed vector values)]
-          (let [x (+ pl (* (/ i (dec n)) pw))
-                y (+ pt (* (- 1.0 (/ (- v mn) rng)) ph))]
-            (if (zero? i) (.moveTo ctx x y) (.lineTo ctx x y))))
-        (.stroke ctx))
-      ;; current value label
-      (when (seq values)
-        (set! (.-fillStyle ctx) color)
-        (set! (.-font ctx) "10px monospace")
-        (.fillText ctx (.toFixed (last values) 1) (- w 38) 14)))))
+(defn draw-line-chart
+  "Draw a time-series line chart onto canvas-id.
+   opts: {:y-min :y-max :markers [tick-indices-into-values] :precision digits}"
+  ([canvas-id values color] (draw-line-chart canvas-id values color {}))
+  ([canvas-id values color opts]
+   (when-let [canvas (js/document.getElementById canvas-id)]
+     (let [ctx (.getContext canvas "2d")
+           w   (.-width canvas)
+           h   (.-height canvas)
+           pl 6 pr 6 pt 6 pb 6
+           pw  (- w pl pr)
+           ph  (- h pt pb)
+           n   (count values)
+           mx  (or (:y-max opts) (reduce max 1 values))
+           mn  (or (:y-min opts) (reduce min 0 values))
+           rng (max 1e-9 (- mx mn))
+           precision (or (:precision opts) 1)]
+       (set! (.-fillStyle ctx) "#f8f9fa")
+       (.fillRect ctx 0 0 w h)
+       ;; mid grid line
+       (set! (.-strokeStyle ctx) "#e0e0e0")
+       (set! (.-lineWidth ctx) 0.5)
+       (.beginPath ctx)
+       (.moveTo ctx pl (+ pt (/ ph 2)))
+       (.lineTo ctx (+ pl pw) (+ pt (/ ph 2)))
+       (.stroke ctx)
+       ;; jubilee markers
+       (when (seq (:markers opts))
+         (set! (.-strokeStyle ctx) "#e91e63")
+         (set! (.-lineWidth ctx) 1)
+         (doseq [i (:markers opts)
+                 :when (and (>= i 0) (< i n))]
+           (let [x (+ pl (* (/ i (max 1 (dec n))) pw))]
+             (.beginPath ctx)
+             (.moveTo ctx x pt)
+             (.lineTo ctx x (+ pt ph))
+             (.stroke ctx))))
+       ;; data line
+       (when (>= n 2)
+         (set! (.-strokeStyle ctx) color)
+         (set! (.-lineWidth ctx) 1.5)
+         (set! (.-lineJoin ctx) "round")
+         (.beginPath ctx)
+         (doseq [[i v] (map-indexed vector values)]
+           (let [x (+ pl (* (/ i (dec n)) pw))
+                 y (+ pt (* (- 1.0 (/ (- v mn) rng)) ph))]
+             (if (zero? i) (.moveTo ctx x y) (.lineTo ctx x y))))
+         (.stroke ctx))
+       ;; current value label
+       (when (seq values)
+         (set! (.-fillStyle ctx) color)
+         (set! (.-font ctx) "10px monospace")
+         (.fillText ctx (.toFixed (last values) precision) (- w 44) 14))))))
+
+(defn draw-ladder-chart
+  "Draw a sorted net-worth bar per agent (poorest to richest), red below zero.
+   sorted-entries: seq of maps with :net-worth, ascending by :net-worth."
+  [ctx width height sorted-entries]
+  (let [n  (count sorted-entries)
+        pl 4 pr 4 pt 4 pb 4
+        pw (- width pl pr)
+        ph (- height pt pb)
+        zero-y (+ pt (/ ph 2))
+        mx (reduce max 1 (map :net-worth sorted-entries))
+        mn (reduce min -1 (map :net-worth sorted-entries))
+        scale-pos (/ (/ ph 2) (max 1e-9 mx))
+        scale-neg (/ (/ ph 2) (max 1e-9 (- mn)))
+        bw (/ pw (max 1 n))]
+    (set! (.-fillStyle ctx) "#fafafa")
+    (.fillRect ctx 0 0 width height)
+    (set! (.-strokeStyle ctx) "#999")
+    (set! (.-lineWidth ctx) 1)
+    (.beginPath ctx)
+    (.moveTo ctx pl zero-y)
+    (.lineTo ctx (+ pl pw) zero-y)
+    (.stroke ctx)
+    (doseq [[i e] (map-indexed vector sorted-entries)]
+      (let [nw (:net-worth e)
+            x (+ pl (* i bw))
+            positive? (>= nw 0)
+            bh (max 1 (if positive? (* nw scale-pos) (* (- nw) scale-neg)))
+            y (if positive? (- zero-y bh) zero-y)]
+        (set! (.-fillStyle ctx) (if positive? "#2e7d32" "#c62828"))
+        (.fillRect ctx (+ x 0.5) y (max 1 (- bw 1)) bh)))))
+
+(defn find-ladder-entry-at-x
+  "Given the same sorted-entries drawn by draw-ladder-chart, find the entry under canvas x."
+  [sorted-entries width x]
+  (let [n  (count sorted-entries)
+        pl 4 pr 4
+        pw (- width pl pr)
+        bw (/ pw (max 1 n))
+        idx (int (/ (- x pl) bw))]
+    (when (and (>= idx 0) (< idx n))
+      (nth sorted-entries idx))))
 
 (defn draw-distribution-chart [canvas-id freq-map color]
   "Draw a bar chart for a value distribution"

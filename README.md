@@ -102,6 +102,19 @@ Implement the `World` protocol with:
 
 ## Examples
 
+### Jubilee: A Debt-Forgiveness Lab
+A non-spatial model of wealth concentration and periodic debt cancellation.
+Agents earn noisy returns on wealth and pay a noisy cost-of-living bill each
+tick; when they can't cover it, the shortfall becomes either arrears (owed to
+the king, no lender involved) or a bilateral loan from a wealthier agent. A
+king can declare Jubilee — on a schedule, at random, when Gini crosses a
+threshold, or at will — forgiving a configurable fraction of all debt and
+arrears. Watch the net-worth ladder, Gini, and credit-volume charts respond.
+
+Open `http://localhost:8080/jubilee.html` (same dev server as below). Pure
+model logic lives in `src/social_abm/jubilee.cljc` (portable, unit-tested via
+`lein test`); browser wiring is in `src/social_abm/browser/jubilee.cljs`.
+
 ### Sugarscape Model
 A classic agent-based model where agents:
 - Move around a landscape consuming sugar
