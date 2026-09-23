@@ -207,6 +207,10 @@
             (set! (.. tooltip -style -display) "none")))))
     (.addEventListener canvas-el "mouseleave" (fn [_] (set! (.. tooltip -style -display) "none")))))
 
+(defn- sync-bankruptcy-params-visibility! []
+  (when-let [el (js/document.getElementById "bankruptcy-params")]
+    (set! (.. el -style -display) (if (bool "bankruptcy-enabled") "flex" "none"))))
+
 (defn setup-controls []
   (.addEventListener (js/document.getElementById "start-btn") "click" start-simulation)
   (.addEventListener (js/document.getElementById "stop-btn") "click" stop-simulation)
@@ -216,6 +220,9 @@
                       (fn [e]
                         (swap! simulation-state assoc :speed (js/parseInt (.-value (.-target e))))
                         (restart-simulation-loop)))
+  (.addEventListener (js/document.getElementById "bankruptcy-enabled") "change"
+                      (fn [_] (sync-bankruptcy-params-visibility!)))
+  (sync-bankruptcy-params-visibility!)
   (doseq [id live-slider-ids] (wire-live-slider! id)))
 
 (defn init-jubilee! []
