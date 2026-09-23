@@ -17,6 +17,51 @@
    "jubilee-cooldown" "haircut" "bankruptcy-debt-multiple" "bankruptcy-streak"
    "bankruptcy-haircut" "bankruptcy-exclusion"])
 
+;; DOM id for every param that isn't structural (population/init-wealth) or
+;; handled specially (jubilee-mode is a <select>, bankruptcy-enabled? a checkbox).
+(def param-id-map
+  {:return-mean "return-mean" :return-vol "return-vol" :base-income "base-income"
+   :consumption-vol "consumption-vol" :subsistence-cost "subsistence-cost"
+   :interest-rate "interest-rate" :lend-reserve-multiple "lend-reserve-multiple"
+   :repay-reserve-multiple "repay-reserve-multiple" :repayment-rate "repayment-rate"
+   :arrears-fraction "arrears-fraction" :jubilee-period "jubilee-period"
+   :jubilee-hazard "jubilee-hazard" :gini-threshold "gini-threshold"
+   :jubilee-cooldown "jubilee-cooldown" :haircut "haircut"
+   :bankruptcy-debt-multiple "bankruptcy-debt-multiple" :bankruptcy-streak "bankruptcy-streak"
+   :bankruptcy-haircut "bankruptcy-haircut" :bankruptcy-exclusion "bankruptcy-exclusion"})
+
+;; Canned parameter sets. Each is a COMPLETE params map (not a diff over
+;; whatever's currently on screen) so scenarios are reproducible and
+;; comparable -- only the relief mechanism differs between them, every
+;; economic-dynamics dial (returns, income, volatility...) stays fixed.
+(def scenarios
+  [{:id "no-relief"
+    :label "No relief (baseline)"
+    :description
+    "No jubilee, no bankruptcy. Debt and arrears accumulate freely and inequality climbs with no correction. This is the baseline the other scenarios are measured against -- run it first."
+    :params (merge j/default-params {:jubilee-mode :manual :bankruptcy-enabled? false})}
+   {:id "periodic-jubilee"
+    :label "Periodic jubilee"
+    :description
+    "The king cancels all debt on a fixed schedule, collectively, for everyone at once. Watch debt and inequality build up between jubilees, then drop sharply at each reset (pink vertical lines on the charts)."
+    :params (merge j/default-params {:jubilee-mode :periodic :jubilee-period 50
+                                      :haircut 1.0 :bankruptcy-enabled? false})}
+   {:id "bankruptcy-only"
+    :label "Bankruptcy only"
+    :description
+    "No collective jubilee. Instead, any individual agent whose own debt burden stays too high for too long gets their own discharge, on their own timeline, with a credit lockout afterward (orange vertical lines). Compare the smoother, more sustained inequality here to periodic jubilee's sharp resets."
+    :params (merge j/default-params {:jubilee-mode :manual :bankruptcy-enabled? true
+                                      :bankruptcy-debt-multiple 3 :bankruptcy-streak 8
+                                      :bankruptcy-haircut 1.0 :bankruptcy-exclusion 20})}
+   {:id "both"
+    :label "Jubilee + bankruptcy"
+    :description
+    "Both mechanisms running together: periodic collective resets, plus individual discharges for whoever falls into serious distress in between. Watch whether bankruptcy mostly mops up the agents a jubilee hasn't gotten to yet, or fires independently of the jubilee cycle."
+    :params (merge j/default-params {:jubilee-mode :periodic :jubilee-period 50 :haircut 1.0
+                                      :bankruptcy-enabled? true :bankruptcy-debt-multiple 3
+                                      :bankruptcy-streak 8 :bankruptcy-haircut 1.0
+                                      :bankruptcy-exclusion 20})}])
+
 (defn- num [id] (js/parseFloat (.-value (js/document.getElementById id))))
 (defn- int-num [id] (js/parseInt (.-value (js/document.getElementById id))))
 (defn- txt [id] (.-value (js/document.getElementById id)))
@@ -211,6 +256,49 @@
   (when-let [el (js/document.getElementById "bankruptcy-params")]
     (set! (.. el -style -display) (if (bool "bankruptcy-enabled") "flex" "none"))))
 
+(defn- sync-jubilee-params-visibility!
+  "Show only the params relevant to the selected trigger mode (elements tagged
+   data-jubilee-mode=\"...\"); e.g. period only matters for :periodic."
+  []
+  (let [mode (txt "jubilee-mode")]
+    (.forEach (js/document.querySelectorAll "[data-jubilee-mode]")
+              (fn [el]
+                (set! (.. el -style -display)
+                      (if (= mode (.getAttribute el "data-jubilee-mode")) "flex" "none"))))))
+
+(defn- set-value! [id v]
+  (when-let [el (js/document.getElementById id)]
+    (set! (.-value el) (str v))
+    (when-let [out (js/document.getElementById (str id "-val"))]
+      (set! (.-textContent out) (str v)))))
+
+(defn- set-checked! [id v]
+  (when-let [el (js/document.getElementById id)]
+    (set! (.-checked el) v)))
+
+(defn fill-params-into-dom!
+  "Write every control on the page to match `params` (a full params map)."
+  [params]
+  (set-value! "population-input" (:population params))
+  (set-value! "init-wealth" (:init-wealth params))
+  (doseq [[k id] param-id-map] (set-value! id (get params k)))
+  (set-value! "jubilee-mode" (name (:jubilee-mode params)))
+  (set-checked! "bankruptcy-enabled" (:bankruptcy-enabled? params))
+  (sync-bankruptcy-params-visibility!)
+  (sync-jubilee-params-visibility!))
+
+(defn find-scenario [id]
+  (some #(when (= id (:id %)) %) scenarios))
+
+(defn apply-scenario!
+  "Fill the DOM from the named scenario's params, show its description, and reset."
+  [id]
+  (when-let [scenario (find-scenario id)]
+    (fill-params-into-dom! (:params scenario))
+    (when-let [desc-el (js/document.getElementById "scenario-description")]
+      (set! (.-textContent desc-el) (:description scenario)))
+    (reset-simulation)))
+
 (defn setup-controls []
   (.addEventListener (js/document.getElementById "start-btn") "click" start-simulation)
   (.addEventListener (js/document.getElementById "stop-btn") "click" stop-simulation)
@@ -222,7 +310,12 @@
                         (restart-simulation-loop)))
   (.addEventListener (js/document.getElementById "bankruptcy-enabled") "change"
                       (fn [_] (sync-bankruptcy-params-visibility!)))
+  (.addEventListener (js/document.getElementById "jubilee-mode") "change"
+                      (fn [_] (sync-jubilee-params-visibility!)))
+  (.addEventListener (js/document.getElementById "scenario-select") "change"
+                      (fn [e] (apply-scenario! (.-value (.-target e)))))
   (sync-bankruptcy-params-visibility!)
+  (sync-jubilee-params-visibility!)
   (doseq [id live-slider-ids] (wire-live-slider! id)))
 
 (defn init-jubilee! []
@@ -233,7 +326,7 @@
           (swap! simulation-state assoc :ctx ctx)
           (setup-controls)
           (setup-canvas-events)
-          (reset-simulation)
+          (apply-scenario! (.-value (js/document.getElementById "scenario-select")))
           (println "Jubilee lab initialized"))
         (println "ERROR: Canvas element 'jubilee-canvas' not found")))
     (catch js/Error e

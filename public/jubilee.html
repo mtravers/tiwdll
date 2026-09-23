@@ -103,12 +103,42 @@
             line-height: 1.7;
         }
         .description { margin-top: 20px; color: #666; line-height: 1.6; font-size: 14px; }
+        .scenario-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+        .scenario-bar select { font-size: 14px; padding: 4px 8px; }
+        #scenario-description {
+            background: #eef6ff;
+            border: 1px solid #bcdcf7;
+            border-radius: 6px;
+            padding: 10px 14px;
+            margin-bottom: 16px;
+            font-size: 13px;
+            line-height: 1.6;
+            color: #234;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Jubilee: A Debt-Forgiveness Lab</h1>
         <div class="nav"><a href="index.html">&larr; Sugarscape lab</a></div>
+
+        <div class="scenario-bar">
+            <label for="scenario-select"><strong>Scenario:</strong></label>
+            <select id="scenario-select">
+                <option value="no-relief">No relief (baseline)</option>
+                <option value="periodic-jubilee" selected>Periodic jubilee</option>
+                <option value="bankruptcy-only">Bankruptcy only</option>
+                <option value="both">Jubilee + bankruptcy</option>
+            </select>
+            <span style="font-size:12px; color:#888;">picking a scenario fills in the parameters below and resets the run</span>
+        </div>
+        <div id="scenario-description"></div>
 
         <div class="controls">
             <button id="start-btn" class="start-btn">Start</button>
@@ -184,13 +214,17 @@
                         <option value="threshold">Threshold (inequality idx)</option>
                         <option value="manual">Manual only</option>
                     </select></div>
-                <div class="param"><label>Period (ticks) <span id="jubilee-period-val"></span></label>
+                <div id="jubilee-period-param" class="param" data-jubilee-mode="periodic">
+                    <label>Period (ticks) <span id="jubilee-period-val"></span></label>
                     <input type="range" id="jubilee-period" min="5" max="300" step="5" value="50"></div>
-                <div class="param"><label>Hazard rate/tick <span id="jubilee-hazard-val"></span></label>
+                <div id="jubilee-hazard-param" class="param" data-jubilee-mode="stochastic">
+                    <label>Hazard rate/tick <span id="jubilee-hazard-val"></span></label>
                     <input type="range" id="jubilee-hazard" min="0" max="0.2" step="0.005" value="0.02"></div>
-                <div class="param"><label>Inequality threshold <span id="gini-threshold-val"></span></label>
+                <div id="gini-threshold-param" class="param" data-jubilee-mode="threshold">
+                    <label>Inequality threshold <span id="gini-threshold-val"></span></label>
                     <input type="range" id="gini-threshold" min="0.2" max="0.95" step="0.01" value="0.6"></div>
-                <div class="param"><label>Cooldown (ticks) <span id="jubilee-cooldown-val"></span></label>
+                <div id="jubilee-cooldown-param" class="param" data-jubilee-mode="threshold">
+                    <label>Cooldown (ticks) <span id="jubilee-cooldown-val"></span></label>
                     <input type="range" id="jubilee-cooldown" min="5" max="100" step="5" value="20"></div>
                 <div class="param"><label>Haircut &phi; <span id="haircut-val"></span></label>
                     <input type="range" id="haircut" min="0" max="1" step="0.05" value="1"></div>
