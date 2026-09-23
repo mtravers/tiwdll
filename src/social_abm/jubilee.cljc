@@ -4,10 +4,13 @@
 
 (def default-params
   {:population 150
-   :init-wealth 3.0
+   :init-wealth 0.5              ; thin starting cushion: shocks bite from tick 1
    :return-mean 0.02            ; mean return on wealth per tick
    :return-vol 0.05              ; +/- uniform noise on return
-   :base-income 0.9              ; flat income per tick; kept below subsistence-cost
+   :base-income 1.0              ; breakeven with subsistence-cost on average; debt comes from noise, not a
+                                  ; guaranteed structural deficit (a permanent gap here drains the whole
+                                  ; economy to near-zero within ~100 ticks regardless of jubilee/bankruptcy
+                                  ; policy, which confounds any comparison between the two -- don't reintroduce one)
    :consumption-vol 0.3          ; +/- uniform noise on cost-of-living bill
    :subsistence-cost 1.0         ; mean cost-of-living bill per tick
    :interest-rate 0.02           ; per-tick interest on outstanding loans
@@ -20,13 +23,19 @@
    :jubilee-hazard 0.02
    :gini-threshold 0.6
    :jubilee-cooldown 20
-   :haircut 1.0})                ; fraction of debt/arrears forgiven when jubilee fires
+   :haircut 1.0                  ; fraction of debt/arrears forgiven when jubilee fires (collective)
+
+   :bankruptcy-enabled? false        ; individual relief, independent of the king's jubilee
+   :bankruptcy-debt-multiple 3       ; discharge trigger: owed > this x subsistence-cost
+   :bankruptcy-streak 8              ; must stay over the trigger this many consecutive ticks
+   :bankruptcy-haircut 1.0           ; fraction of that agent's debt+arrears forgiven
+   :bankruptcy-exclusion 20})        ; ticks after discharge with no new loans (arrears still possible)
 
 ;; ---------------------------------------------------------------------------
 ;; Agents & state
 
 (defn make-agent [id wealth]
-  {:id id :wealth wealth :arrears 0.0})
+  {:id id :wealth wealth :arrears 0.0 :distress-streak 0 :exclusion-remaining 0})
 
 (defn init-state [params]
   (let [n (:population params)]
@@ -36,6 +45,8 @@
      :next-loan-id 0
      :king-treasury 0.0
      :jubilee-ticks []
+     :bankruptcy-ticks []
+     :total-bankruptcies 0
      :history []
      :net-worths []
      :params params}))
@@ -64,23 +75,27 @@
 
 ;; ---------------------------------------------------------------------------
 ;; Step D/E: cover shortfalls via arrears (no cash, a claim on the king) or a
-;; bilateral loan from a lender with surplus above their reserve.
+;; bilateral loan from a lender with surplus above their reserve. Agents still
+;; inside their post-bankruptcy exclusion window can't get a new loan -- their
+;; whole shortfall becomes arrears instead (no lender would extend them credit;
+;; an unpaid bill still accrues, since they still have to eat).
 
 (defn resolve-borrowing
-  [agents unpaid params next-loan-id]
+  [agents unpaid existing-loans params next-loan-id]
   (let [{:keys [arrears-fraction lend-reserve-multiple subsistence-cost interest-rate]} params
         reserve (* subsistence-cost lend-reserve-multiple)
         borrower-ids (shuffle (filter #(pos? (nth unpaid %)) (range (count agents))))]
     (loop [agents agents
            bids borrower-ids
-           loans []
+           loans existing-loans
            next-id next-loan-id]
       (if (empty? bids)
         {:agents agents :loans loans :next-loan-id next-id}
         (let [bid (first bids)
               amt (nth unpaid bid)
-              arrears-amt (* amt arrears-fraction)
-              loan-need (- amt arrears-amt)
+              excluded? (pos? (:exclusion-remaining (nth agents bid)))
+              arrears-amt (if excluded? amt (* amt arrears-fraction))
+              loan-need (if excluded? 0 (- amt arrears-amt))
               agents (update agents bid update :arrears + arrears-amt)
               lender-idx (->> (range (count agents))
                                (remove #(= % bid))
@@ -146,6 +161,50 @@
 (defn drop-dead-loans [loans]
   (filterv #(> (:balance %) 1e-6) loans))
 
+(defn- claims-by-agent [loans]
+  (reduce (fn [m l] (update m (:lender l) (fnil + 0) (:balance l))) {} loans))
+
+(defn- debts-by-agent [loans]
+  (reduce (fn [m l] (update m (:borrower l) (fnil + 0) (:balance l))) {} loans))
+
+;; ---------------------------------------------------------------------------
+;; Bankruptcy: individual relief, independent of the king. An agent whose debt
+;; burden (loans + arrears) has stayed above the trigger for `bankruptcy-streak`
+;; consecutive ticks gets `bankruptcy-haircut` of it discharged, and is locked
+;; out of new loans for `bankruptcy-exclusion` ticks (arrears can still accrue).
+
+(defn resolve-bankruptcy [agents loans params]
+  (let [{:keys [bankruptcy-enabled? bankruptcy-debt-multiple bankruptcy-streak
+                bankruptcy-haircut bankruptcy-exclusion subsistence-cost]} params
+        debts (debts-by-agent loans)
+        threshold (* bankruptcy-debt-multiple subsistence-cost)
+        agents' (mapv (fn [a]
+                         (let [owed (+ (get debts (:id a) 0) (:arrears a))
+                               over? (and bankruptcy-enabled? (> owed threshold))]
+                           (-> a
+                               (assoc :distress-streak (if over? (inc (:distress-streak a)) 0))
+                               (update :exclusion-remaining #(max 0 (dec (or % 0)))))))
+                       agents)
+        bankrupt-ids (if bankruptcy-enabled?
+                       (set (keep (fn [a] (when (>= (:distress-streak a) bankruptcy-streak) (:id a)))
+                                  agents'))
+                       #{})]
+    (if (empty? bankrupt-ids)
+      {:agents agents' :loans loans :bankrupt-ids []}
+      {:agents (mapv (fn [a]
+                        (if (contains? bankrupt-ids (:id a))
+                          (-> a
+                              (update :arrears * (- 1 bankruptcy-haircut))
+                              (assoc :distress-streak 0 :exclusion-remaining bankruptcy-exclusion))
+                          a))
+                      agents')
+       :loans (drop-dead-loans
+               (mapv (fn [l] (if (contains? bankrupt-ids (:borrower l))
+                               (update l :balance * (- 1 bankruptcy-haircut))
+                               l))
+                     loans))
+       :bankrupt-ids (vec bankrupt-ids)})))
+
 ;; ---------------------------------------------------------------------------
 ;; Jubilee
 
@@ -177,8 +236,8 @@
 (defn net-worths
   "Vector of net worth (cash + claims held - debt owed - arrears owed), indexed like agents."
   [agents loans]
-  (let [claims (reduce (fn [m loan] (update m (:lender loan) (fnil + 0) (:balance loan))) {} loans)
-        debts (reduce (fn [m loan] (update m (:borrower loan) (fnil + 0) (:balance loan))) {} loans)]
+  (let [claims (claims-by-agent loans)
+        debts (debts-by-agent loans)]
     (mapv (fn [a] (- (+ (:wealth a) (get claims (:id a) 0))
                       (get debts (:id a) 0)
                       (:arrears a)))
@@ -212,7 +271,7 @@
   (let [n (count xs)]
     (if (zero? n) 0.0 (/ (count (filter neg? xs)) n))))
 
-(defn- metrics-entry [state nw jubilee?]
+(defn- metrics-entry [state nw jubilee? n-bankrupt]
   {:tick (:tick state)
    :gini (gini nw)
    :top-decile (top-decile-share nw)
@@ -221,7 +280,9 @@
    :total-arrears (reduce + 0.0 (map :arrears (:agents state)))
    :n-loans (count (:loans state))
    :total-wealth (reduce + 0.0 (map :wealth (:agents state)))
-   :jubilee? jubilee?})
+   :jubilee? jubilee?
+   :n-bankrupt n-bankrupt
+   :total-bankruptcies (:total-bankruptcies state)})
 
 (defn- push-history [state entry]
   (let [h (conj (:history state) entry)]
@@ -237,7 +298,7 @@
         unpaid (mapv second pairs)
         loans1 (accrue-interest (:loans state))
         {agents2 :agents loans2 :loans next-id :next-loan-id}
-        (resolve-borrowing agents1 unpaid params (:next-loan-id state))
+        (resolve-borrowing agents1 unpaid loans1 params (:next-loan-id state))
         {agents3 :agents loans3 :loans treasury-delta :treasury}
         (resolve-repayment agents2 loans2 params)
         loans3 (drop-dead-loans loans3)
@@ -248,11 +309,17 @@
                    :king-treasury (+ (:king-treasury state) treasury-delta)
                    :tick (inc (:tick state)))
         fire? (should-jubilee? mid g)
-        final (if fire? (apply-jubilee mid) mid)
-        nw-final (if fire? (net-worths (:agents final) (:loans final)) nw)]
+        post-jubilee (if fire? (apply-jubilee mid) mid)
+        {bagents :agents bloans :loans bankrupt-ids :bankrupt-ids}
+        (resolve-bankruptcy (:agents post-jubilee) (:loans post-jubilee) params)
+        n-bankrupt (count bankrupt-ids)
+        final (cond-> (assoc post-jubilee :agents bagents :loans bloans)
+                (pos? n-bankrupt) (-> (update :bankruptcy-ticks conj {:tick (:tick post-jubilee) :ids bankrupt-ids})
+                                      (update :total-bankruptcies + n-bankrupt)))
+        nw-final (net-worths (:agents final) (:loans final))]
     (-> final
         (assoc :net-worths nw-final)
-        (push-history (metrics-entry final nw-final fire?)))))
+        (push-history (metrics-entry final nw-final fire? n-bankrupt)))))
 
 (defn force-jubilee
   "King's-discretion jubilee: apply immediately regardless of trigger mode."
@@ -261,4 +328,4 @@
         nw (net-worths (:agents state') (:loans state'))]
     (-> state'
         (assoc :net-worths nw)
-        (push-history (metrics-entry state' nw true)))))
+        (push-history (metrics-entry state' nw true 0)))))

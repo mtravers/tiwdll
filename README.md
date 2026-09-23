@@ -109,7 +109,12 @@ tick; when they can't cover it, the shortfall becomes either arrears (owed to
 the king, no lender involved) or a bilateral loan from a wealthier agent. A
 king can declare Jubilee — on a schedule, at random, when Gini crosses a
 threshold, or at will — forgiving a configurable fraction of all debt and
-arrears. Watch the net-worth ladder, Gini, and credit-volume charts respond.
+arrears, collectively, for everyone at once. A separate **bankruptcy** mode
+offers the individual counterpart: any agent whose own debt burden stays
+above a threshold long enough gets their own discharge, on their own
+timeline, independent of the king — with a post-discharge credit lockout
+in place of the king's blanket mercy. The two can run together or apart.
+Watch the net-worth ladder, Gini, and credit-volume charts respond.
 
 Open `http://localhost:8080/jubilee.html` (same dev server as below). Pure
 model logic lives in `src/social_abm/jubilee.cljc` (portable, unit-tested via

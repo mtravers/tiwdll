@@ -112,7 +112,9 @@
 
 (defn draw-line-chart
   "Draw a time-series line chart onto canvas-id.
-   opts: {:y-min :y-max :markers [tick-indices-into-values] :precision digits}"
+   opts: {:y-min :y-max :markers [idx...] :markers2 [idx...] :precision digits}
+   :markers draws pink vertical lines (e.g. jubilee ticks), :markers2 draws orange ones
+   (e.g. bankruptcy ticks); both index into `values`."
   ([canvas-id values color] (draw-line-chart canvas-id values color {}))
   ([canvas-id values color opts]
    (when-let [canvas (js/document.getElementById canvas-id)]
@@ -136,11 +138,13 @@
        (.moveTo ctx pl (+ pt (/ ph 2)))
        (.lineTo ctx (+ pl pw) (+ pt (/ ph 2)))
        (.stroke ctx)
-       ;; jubilee markers
-       (when (seq (:markers opts))
-         (set! (.-strokeStyle ctx) "#e91e63")
+       ;; event markers (jubilee ticks in pink, bankruptcy ticks in orange)
+       (doseq [[marker-ids marker-color] [[(:markers opts) "#e91e63"]
+                                           [(:markers2 opts) "#ff9800"]]
+               :when (seq marker-ids)]
+         (set! (.-strokeStyle ctx) marker-color)
          (set! (.-lineWidth ctx) 1)
-         (doseq [i (:markers opts)
+         (doseq [i marker-ids
                  :when (and (>= i 0) (< i n))]
            (let [x (+ pl (* (/ i (max 1 (dec n))) pw))]
              (.beginPath ctx)

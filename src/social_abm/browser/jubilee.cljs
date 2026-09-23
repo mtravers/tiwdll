@@ -14,11 +14,13 @@
   ["return-mean" "return-vol" "base-income" "consumption-vol" "subsistence-cost"
    "interest-rate" "lend-reserve-multiple" "repay-reserve-multiple" "repayment-rate"
    "arrears-fraction" "jubilee-period" "jubilee-hazard" "gini-threshold"
-   "jubilee-cooldown" "haircut"])
+   "jubilee-cooldown" "haircut" "bankruptcy-debt-multiple" "bankruptcy-streak"
+   "bankruptcy-haircut" "bankruptcy-exclusion"])
 
 (defn- num [id] (js/parseFloat (.-value (js/document.getElementById id))))
 (defn- int-num [id] (js/parseInt (.-value (js/document.getElementById id))))
 (defn- txt [id] (.-value (js/document.getElementById id)))
+(defn- bool [id] (.-checked (js/document.getElementById id)))
 
 (defn read-live-params
   "Params a user can change mid-run without resetting the population."
@@ -38,7 +40,12 @@
    :jubilee-hazard (num "jubilee-hazard")
    :gini-threshold (num "gini-threshold")
    :jubilee-cooldown (int-num "jubilee-cooldown")
-   :haircut (num "haircut")})
+   :haircut (num "haircut")
+   :bankruptcy-enabled? (bool "bankruptcy-enabled")
+   :bankruptcy-debt-multiple (num "bankruptcy-debt-multiple")
+   :bankruptcy-streak (int-num "bankruptcy-streak")
+   :bankruptcy-haircut (num "bankruptcy-haircut")
+   :bankruptcy-exclusion (int-num "bankruptcy-exclusion")})
 
 (defn agent-details
   "Per-agent breakdown (cash/claims/debt/arrears/net-worth), sorted ascending by net worth."
@@ -50,7 +57,8 @@
         nws (:net-worths sim)]
     (->> (map (fn [a nw]
                 {:id (:id a) :wealth (:wealth a) :arrears (:arrears a)
-                 :claims (get claims (:id a) 0) :debt (get debts (:id a) 0) :net-worth nw})
+                 :claims (get claims (:id a) 0) :debt (get debts (:id a) 0) :net-worth nw
+                 :distress-streak (:distress-streak a) :exclusion-remaining (:exclusion-remaining a)})
               agents nws)
          (sort-by :net-worth)
          vec)))
@@ -62,10 +70,12 @@
                     ["n-loans" (count (:loans sim))]
                     ["gini-val" (.toFixed (or (:gini last-entry) 0) 3)]
                     ["negshare-val" (str (.toFixed (* 100 (or (:frac-negative last-entry) 0)) 1) "%")]
+                    ["wealth-val" (.toFixed (or (:total-wealth last-entry) 0) 1)]
                     ["debt-val" (.toFixed (or (:total-debt last-entry) 0) 1)]
                     ["arrears-val" (.toFixed (or (:total-arrears last-entry) 0) 1)]
                     ["treasury-val" (.toFixed (:king-treasury sim) 1)]
-                    ["jubilee-count" (count (:jubilee-ticks sim))]]]
+                    ["jubilee-count" (count (:jubilee-ticks sim))]
+                    ["bankruptcy-count" (:total-bankruptcies sim)]]]
       (when-let [el (js/document.getElementById id)]
         (set! (.-textContent el) (str v))))))
 
@@ -83,7 +93,8 @@
 (defn draw-jubilee-charts! [sim]
   (let [history (:history sim)
         markers (vec (keep-indexed (fn [i e] (when (:jubilee? e) i)) history))
-        opts {:markers markers}
+        markers2 (vec (keep-indexed (fn [i e] (when (pos? (:n-bankrupt e 0)) i)) history))
+        opts {:markers markers :markers2 markers2}
         gini-vals (mapv :gini history)
         topdecile-vals (mapv :top-decile history)
         negshare-vals (mapv #(* 100 (:frac-negative %)) history)
@@ -185,7 +196,11 @@
                          "Cash: " (.toFixed (:wealth entry) 2) "<br>"
                          "Claims held (lender): " (.toFixed (:claims entry) 2) "<br>"
                          "Debt owed (borrower): " (.toFixed (:debt entry) 2) "<br>"
-                         "Arrears: " (.toFixed (:arrears entry) 2)))
+                         "Arrears: " (.toFixed (:arrears entry) 2)
+                         (when (pos? (:distress-streak entry 0))
+                           (str "<br>Distress streak: " (:distress-streak entry) " ticks"))
+                         (when (pos? (:exclusion-remaining entry 0))
+                           (str "<br>Credit-locked: " (:exclusion-remaining entry) " ticks left"))))
               (set! (.. tooltip -style -display) "block")
               (set! (.. tooltip -style -left) (str (+ (.-clientX e) 14) "px"))
               (set! (.. tooltip -style -top) (str (+ (.-clientY e) 14) "px")))
