@@ -1,0 +1,8 @@
+target/
+.shadow-cljs/
+.nrepl-port
+.lein-repl-history
+.lein-failures
+*.jar
+.#*
+*~

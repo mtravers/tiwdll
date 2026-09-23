@@ -1,14 +1,18 @@
 {:source-paths ["src"]
  :dependencies [[reagent "1.2.0"]
                 [re-frame "1.4.2"]]
- :dev-http {8080 "public"}
+ ;; `watch` (dev) writes scratch/intermediate compilation output (per-namespace
+ ;; files, manifest.edn) under target/, never into public/. `release` writes
+ ;; the final, single optimized bundle straight into public/js -- that's the
+ ;; only JS meant to be committed/published. target/build is checked first so
+ ;; a live `watch` session always wins over a stale committed release bundle.
+ :dev-http {8080 ["public" "target/build"]}
  :builds
  {:app {:target :browser
-        :output-dir "public/js"
         :asset-path "/js"
         :modules {:main {:init-fn social-abm.browser.core/init!}}
-        :devtools {:http-root "public"
-                   :http-port 8080}}
+        :dev {:output-dir "target/build/js"}
+        :release {:output-dir "public/js"}}
   :test {:target :node-test
          :output-to "target/test.js"
          :autorun true}}}
